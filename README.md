@@ -103,5 +103,5 @@ Manages one or more client instances with log-based event detection (`Connection
 
 ## 🙏 Credits
 
-- [Slipstream Rust](https://github.com/nicholasgasior/slipstream) — original DNS-over-HTTPS tunnel
-- [Slipstream Rust Plus](https://github.com/nicholasgasior/slipstream-rust-plus) — multi-resolver fork
+- [Slipstream Rust](https://github.com/Mygod/slipstream-rust) — original DNS-over-HTTPS tunnel
+- [Slipstream Rust Plus](https://github.com/Fox-Fig/slipstream-rust-plus) — multi-resolver fork
