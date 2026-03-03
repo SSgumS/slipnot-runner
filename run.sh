@@ -632,7 +632,7 @@ case "$COMMAND" in
                     probe_url=$(inject_port "$HC_URL" "$local_port")
                     curl -s -m 5 -k "$probe_url" >/dev/null
                     CURL_EXIT=$?
-                    local hc_success=false
+                    hc_success=false
                     for ecode in "${HC_SUCCESS_CODES[@]}"; do
                         [[ "$CURL_EXIT" -eq "$ecode" ]] && { hc_success=true; break; }
                     done
