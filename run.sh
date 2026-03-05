@@ -427,6 +427,22 @@ case "$COMMAND" in
 
         assign_initial_resolvers
 
+        # Global monotonic counter: each assignment increments this.
+        # RESOLVER_LAST_USED[idx] = counter value when idx was last assigned.
+        # Lower value = more stale = should be picked first on rotation.
+        ASSIGN_COUNTER=0
+        declare -a RESOLVER_LAST_USED
+        for ((idx=0; idx<NUM_RESOLVERS; idx++)); do
+            RESOLVER_LAST_USED[$idx]=0
+        done
+        # Mark initially assigned resolvers as used
+        for ((i=0; i<CLIENT_COUNT; i++)); do
+            for idx in ${CLIENT_RESOLVERS[$i]}; do
+                ((ASSIGN_COUNTER++))
+                RESOLVER_LAST_USED[$idx]=$ASSIGN_COUNTER
+            done
+        done
+
         for ((i=0; i<CLIENT_COUNT; i++)); do
             CLIENT_PIDS[$i]=0
             CLIENT_READY[$i]=false
@@ -446,8 +462,9 @@ case "$COMMAND" in
         }
 
         # --- Rotation ---
-        # Builds a queue: (reserve indices not in old_set) + old_set
-        # Picks the first N from the queue
+        # Picks resolvers not used by other clients, preferring the ones
+        # that were least-recently-assigned (lowest RESOLVER_LAST_USED value).
+        # The caller's own old resolvers are deprioritized (sorted to end).
         rotate_client() {
             local cid=$1
             local old_set="${CLIENT_RESOLVERS[$cid]}"
@@ -468,8 +485,9 @@ case "$COMMAND" in
             local used
             used=$(get_used_indices "$cid")
 
-            # Build queue: free indices not in old_set first, then old_set
+            # Collect free indices (not used by others), split into fresh vs old
             local fresh=()
+            local old_free=()
             local old_arr=($old_set)
             for ((idx=0; idx<NUM_RESOLVERS; idx++)); do
                 # Skip if used by another client
@@ -479,23 +497,47 @@ case "$COMMAND" in
                 done
                 $in_used && continue
 
-                # Skip if in old_set (added to end later)
+                # Separate into old_set vs fresh
                 local in_old=false
                 for o in "${old_arr[@]}"; do
                     [[ $idx -eq $o ]] && { in_old=true; break; }
                 done
-                $in_old && continue
-
-                fresh+=("$idx")
+                if $in_old; then
+                    old_free+=("$idx")
+                else
+                    fresh+=("$idx")
+                fi
             done
 
-            # Queue = fresh + old_set
-            local queue=("${fresh[@]}" "${old_arr[@]}")
+            # Sort fresh[] by RESOLVER_LAST_USED ascending (least recently used first)
+            if (( ${#fresh[@]} > 1 )); then
+                local sorted_fresh=()
+                # Simple selection sort (small array, fine for bash)
+                local tmp_fresh=("${fresh[@]}")
+                while (( ${#tmp_fresh[@]} > 0 )); do
+                    local min_idx=0
+                    for ((si=1; si<${#tmp_fresh[@]}; si++)); do
+                        if (( RESOLVER_LAST_USED[${tmp_fresh[$si]}] < RESOLVER_LAST_USED[${tmp_fresh[$min_idx]}] )); then
+                            min_idx=$si
+                        fi
+                    done
+                    sorted_fresh+=("${tmp_fresh[$min_idx]}")
+                    # Remove element at min_idx
+                    tmp_fresh=("${tmp_fresh[@]:0:$min_idx}" "${tmp_fresh[@]:$((min_idx+1))}")
+                done
+                fresh=("${sorted_fresh[@]}")
+            fi
+
+            # Queue = fresh (sorted by staleness) + old_set (fallback)
+            local queue=("${fresh[@]}" "${old_free[@]}")
 
             # Pick first 'need' from queue
             local picked=""
             for ((q=0; q<need && q<${#queue[@]}; q++)); do
                 picked+="${queue[$q]} "
+                # Update last-used tracking
+                ((ASSIGN_COUNTER++))
+                RESOLVER_LAST_USED[${queue[$q]}]=$ASSIGN_COUNTER
             done
             CLIENT_RESOLVERS[$cid]="${picked% }"
 
